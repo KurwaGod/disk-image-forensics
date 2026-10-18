@@ -1,0 +1,6 @@
+*.img
+*.dd
+evidence/
+work/
+all.txt
+unalloc.dd
