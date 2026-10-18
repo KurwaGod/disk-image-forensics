@@ -1,195 +1,123 @@
-# disk image forensics - collecting evidence without breaking it
+# disk image forensics
 
-notes and scripts for pulling evidence out of a linux disk image in a way
-that holds up. written after working the xp cyber range challenge
-"analyzing attack artifacts", but the method is general - it works on any
-ext2/3/4 image you need to collect from.
+notes from pulling evidence off a linux disk image without wrecking it.
+written after an xp cyber range challenge, though none of it is tied to
+that. works on any ext2/3/4 image.
 
-the short version: never mount the image, pull files out by inode, hash
-everything twice, and collect what is actually evidence rather than whatever
-fills the quota.
+## don't mount it
 
-## why not just mount it
+mounting is the obvious move and it will cost you.
 
-mounting is the obvious move and it is the one that will cost you.
+images taken off a crashed or live machine usually have a dirty journal.
+`fsstat` will say `Unmounted Improperly`. mount an ext3/ext4 filesystem in
+that state and the kernel replays the journal, which writes to the image and
+changes the hash. `-o ro` on its own does not stop this. you also need
+`noload`.
 
-most images taken off a live or crashed machine have a dirty journal.
-`fsstat` will say `Unmounted Improperly`. when you mount an ext3/ext4
-filesystem in that state the kernel **replays the journal**, and replaying
-writes to the image. the hash changes. if anyone is comparing that hash
-against the one taken at acquisition, you have just failed.
+easier to skip mounting entirely. every sleuth kit tool below reads the
+image without writing to it.
 
-plain `-o ro` does not stop this. you need `noload` as well.
+## the steps
 
-the better answer is to not mount at all. every sleuth kit tool below reads
-the image directly and never writes to it.
-
-if you truly have to mount:
-
-```
-sudo losetup -r -f --show var.img
-sudo mount -o ro,noload,noexec,nodev,nosuid /dev/loop0 /mnt/point
-```
-
-## the method
-
-### 1. hash it before you touch it
+hash it first. this is the number everything gets measured against.
 
 ```
 sha256sum var.img
 ```
 
-this is the number everything else is measured against. write it down.
-
-### 2. make it physically unwritable
+lock it so you can't fat-finger a redirect into it. even root can't write to
+an immutable file. ctime changes, content doesn't, hash stays the same.
 
 ```
 sudo chattr +i var.img
-lsattr var.img
 ```
 
-the immutable flag means even root cannot write to, rename, or delete the
-file. a mistyped redirect fails with "operation not permitted" instead of
-silently destroying your evidence. it bumps ctime but changes zero bytes, so
-the hash is unaffected.
-
-clear it with `chattr -i` when you are done.
-
-### 3. identify the filesystem
+check what you're looking at. note the last written and last mounted times.
 
 ```
 fsstat var.img | head -20
 ```
 
-gives you the type, the volume id, and the last written / last mounted /
-last checked timestamps. those belong in your notes.
-
-compare `Last Written` against the timestamp on the final log entry you
-find later. a big gap means log data is missing.
-
-### 4. list the files without mounting
+list the files. use `-p` or you get indentation instead of paths, and every
+grep comes back empty for no obvious reason.
 
 ```
 fls -rp var.img > all.txt
 ```
 
-`-r` is recursive, `-p` prints full paths.
-
-**use `-p`.** without it you get indentation instead of paths, every grep
-for a path fragment silently returns nothing, and it looks like the files
-do not exist. this wastes more time than anything else on this list.
-
-### 5. pull files out by inode
+pull files out by inode. no mount, no atime changes, nothing touches the
+image.
 
 ```
 icat var.img 9815 > access_log
 ```
 
-`icat` streams the inode's data blocks straight out of the image. no mount,
-no atime updates, no chance of the host filesystem touching anything.
-
-### 6. verify every extraction
+verify each one. two matching hashes is your proof the copy is clean.
 
 ```
 icat var.img 9815 | sha256sum
 sha256sum access_log
 ```
 
-two identical hashes is your proof the extraction was sound. this also
-catches the easy mistake of extracting the same inode twice under two
-different names, which leaves you with two identical files and a failed
-check.
-
-### 7. recover what was deleted
-
-try the clean route first:
+look for deleted files. skip `* 0:` entries (metadata gone) and `(realloc)`
+ones (inode belongs to something else now, icat gives you the wrong file).
 
 ```
 fls -rpd var.img | grep -v realloc | grep -v "\* 0:"
 ```
 
-anything left is recoverable byte for byte with `icat`. the two you are
-filtering out:
-
-- `* 0:` - the metadata is gone, there is nothing to recover
-- `(realloc)` - the inode now belongs to a different file, `icat` will hand
-  you the wrong data
-
-if that comes back empty, carve instead:
+if nothing survives there, carve the free space instead.
 
 ```
 blkls var.img > unalloc.dd
 strings unalloc.dd | grep -wF <ip> > recovered
 ```
 
-`blkls` pulls only the unallocated blocks. deleted content lives there until
-something overwrites it.
+a decent way to spot what someone deleted: list every ip in the surviving
+log, then look for ips in the carved data that aren't in it.
 
-a useful trick for finding what was deleted: collect every ip in the
-surviving log, then look for ips in the carved data that are **not** in that
-set. those belonged to entries somebody removed.
-
-note that carving with `strings` gives you a reconstruction, not a byte
-exact copy - it drops non printable bytes, and the original inode is gone so
-there is nothing to hash against. say so in your writeup.
-
-### 8. verify the image again
+unlock and hash again. should match step one.
 
 ```
 sudo chattr -i var.img
 sha256sum var.img
 ```
 
-must match step 1.
+## things that cost me time
 
-## gotchas
+**a file limit is a ceiling, not a target.** told "no more than five files",
+i submitted five and the check stayed red. four passed. the fifth was
+`/var/log/messages`, thousands of lines of boot noise from before the attack.
 
-things that cost real time:
+**automated checks lag.** give them a minute. i undid a change that had
+actually worked because the old red was still showing.
 
-**relevance beats count.** if you are told "no more than five files", that
-is a ceiling, not a target. we submitted five including `/var/log/messages`
-and the check stayed red. four files without it passed. `messages` was
-thousands of lines of kernel boot noise that ended before the attack even
-started. collect evidence, not filler.
+**two logs the same size means you extracted the same inode twice.** `cmp a b`
+printing nothing confirms it.
 
-**automated checks lag.** state can take a minute or two to re-evaluate.
-reading a stale red as "that change did not work" and then undoing a change
-that had actually worked is a great way to go in circles. make one change,
-wait, then read.
+**same directory name in two places.** centos has `/var/log/httpd` and
+`/var/cache/httpd`. the cache one holds a single `proxy` entry and makes it
+look like the logs are gone.
 
-**check for duplicate extractions.** two different logs with byte identical
-sizes is the tell. `cmp a b` printing nothing means they are the same file.
+**don't work as root.** `sudo su` makes `~` point at `/root`, so your
+redirects land somewhere you aren't looking. only `chattr` needs sudo.
 
-**there can be more than one directory with the same name.** on centos there
-is `/var/log/httpd` (the logs) and `/var/cache/httpd` (the mod_proxy cache).
-listing the wrong one shows a single `proxy` entry and makes it look like
-the logs were wiped.
+**wtmp and btmp are binary.** `last -f wtmp` reads them, but `last` isn't
+always installed and locked-down ranges often have no package mirror.
+`strings wtmp` gets you the usernames and ips anyway.
 
-**do not work as root.** `sudo su` makes `~` expand to `/root`, so your
-redirects land somewhere you are not looking and your files come out root
-owned. everything here works unprivileged except `chattr`.
-
-**keep scratch files off the desktop.** carving tools can emit thousands of
-files. carve somewhere else and copy in only the finding.
-
-**binary logs need a tool, not `cat`.** `wtmp` and `btmp` hold login
-records. `last -f wtmp` reads them, but `last` is not always installed and a
-locked down range may have no working package mirror. `strings wtmp` gets
-you the usernames, terminals and source ips without installing anything.
-
-**collection is not attribution.** if the task says "identify, collect, and
-seize", then reconstructing the full intrusion timeline is the next
-analyst's job, not yours. it is easy to burn an hour building a narrative
-nobody asked for.
+**read the task before building a timeline.** if it says collect evidence,
+then working out who did what is somebody else's job. i burned an hour on a
+story nobody asked for.
 
 ## files
 
-| file | what it is |
-| --- | --- |
-| `analyze_artifacts_walkthrough.sh` | guided version - runs in stages, stops between them so you read the output and make the calls yourself |
-| `solver/` | automated version, see the note in there first |
+`analyze_artifacts_walkthrough.sh` runs in stages and stops between them so
+you read the output yourself.
 
-both were tested end to end against a purpose built ext4 image.
+`solver/` does the whole thing unattended. read the note in there first.
+
+both tested against a purpose-built ext4 image.
 
 ## requirements
 
@@ -197,13 +125,11 @@ both were tested end to end against a purpose built ext4 image.
 sudo apt install sleuthkit
 ```
 
-everything else (`sha256sum`, `strings`, `grep`, `awk`, `chattr`) is already
-on any linux box.
+everything else ships with linux.
 
 ## license
 
-mit - see [LICENSE](LICENSE).
+mit, see [LICENSE](LICENSE).
 
-these scripts run `sudo chattr` and operate on evidence files. the warranty
-disclaimer is not decoration. read what they do before pointing them at
-anything you care about.
+these scripts run `sudo chattr` and touch evidence files. read them before
+pointing them at anything you care about.
