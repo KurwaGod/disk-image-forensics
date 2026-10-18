@@ -85,7 +85,6 @@ sha256sum var.img
 
 ## things that cost me time
 
-**a file limit is a ceiling, not a target.** told "no more than five files",
 i submitted five and the check stayed red. four passed. the fifth was
 `/var/log/messages`, thousands of lines of boot noise from before the attack.
 
