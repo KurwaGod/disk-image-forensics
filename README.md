@@ -1,5 +1,9 @@
 # disk image forensics
 
+# analyzing artifacts guide 
+made this because of how bad i am at digital forensics and to save
+others the time i wasted 
+
 notes from pulling evidence off a linux disk image without wrecking it.
 written after an xp cyber range challenge, though none of it is tied to
 that. works on any ext2/3/4 image.
