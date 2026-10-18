@@ -130,6 +130,9 @@ noting the lab itself should have it pre-installed as mentioned in the lab desc
 
 everything else ships with linux.
 
+## NOTE: I solved the lab and had all of my work processed by an agent, where it them simplified it and turned it into a shell script(s)
+
+
 ##
 
 if either of the scripts are bugged make a pull request and ill check it 
