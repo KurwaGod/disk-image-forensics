@@ -4,6 +4,8 @@ notes from pulling evidence off a linux disk image without wrecking it.
 written after an xp cyber range challenge, though none of it is tied to
 that. works on any ext2/3/4 image.
 
+chattr is your friend use it!!!
+
 ## don't mount it
 
 mounting is the obvious move and it will cost you.
@@ -124,7 +126,13 @@ both tested against a purpose-built ext4 image.
 sudo apt install sleuthkit
 ```
 
+noting the lab itself should have it pre-installed as mentioned in the lab desc
+
 everything else ships with linux.
+
+##
+
+if either of the scripts are bugged make a pull request and ill check it 
 
 ## license
 
