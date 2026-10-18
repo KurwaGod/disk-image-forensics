@@ -130,8 +130,7 @@ noting the lab itself should have it pre-installed as mentioned in the lab desc
 
 everything else ships with linux.
 
-## NOTE: I solved the lab and had all of my work processed by an agent, where it them simplified it and turned it into a shell script(s)
-
+## NOTE: I solved the lab and had all of my work processed by an agent, where it them simplified it and turned it into a shell script(s) it also helped me build this repo and this readme. I am not a documentation writer, thank god. 
 
 ##
 
